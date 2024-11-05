@@ -1,0 +1,123 @@
+#!/bin/sh
+
+PLAN9=`pwd` export PLAN9
+
+echo "* Resetting $PLAN9/config"
+rm -f config
+
+PLAN9=`pwd` export PLAN9
+PATH=/bin:/usr/bin:$PLAN9/bin:$PATH export PATH
+[ -z "$PLAN9_TARGET" ] && PLAN9_TARGET="$PLAN9"
+export PLAN9_TARGET
+
+case `uname` in
+SunOS)
+	awk=nawk
+	;;
+DragonFly|*BSD)
+	case `cc -v 2>&1` in
+	*clang*)
+		echo "CC9=clang" >> $PLAN9/config
+		;;
+	*gcc*)
+		echo "CC9=gcc" >> $PLAN9/config
+		;;
+	esac
+	echo "* Running on" `uname`", adjusting linker flags"
+	case `uname` in
+	OpenBSD)
+		echo "LDFLAGS='-L/usr/X11R6/lib -pthread'" >> $PLAN9/config
+		;;
+	NetBSD)
+		echo "LDFLAGS='-L/usr/X11R7/lib -pthread'" >> $PLAN9/config
+		;;
+	*)
+		echo "LDFLAGS='-L/usr/local/lib -pthread'" >> $PLAN9/config
+		;;
+	esac
+	echo "CFLAGS='-pthread'" >> $PLAN9/config
+	awk=awk
+	;;
+*)
+	awk=awk
+	;;
+esac
+
+(
+if [ `uname` = SunOS ]; then
+	# On Solaris x86, uname -p cannot be trusted.
+	echo "* Running on Solaris: checking architecture..."
+	case "$(isainfo -n)" in
+	*amd64*)
+		echo "	x86-64 found; using gcc."
+		echo "CC9=gcc" >>$PLAN9/config # defaults to gcc on Solaris/amd64
+		;;
+	*i386*)
+		echo "	i386 found; using gcc."
+		echo "CC9=gcc" >>$PLAN9/config # defaults to gcc on Solaris/i386
+		;;
+	*sparc*)
+		echo "	Sparc found."
+		;;
+	esac
+fi
+
+if [ `uname` = Darwin ]; then
+	export NPROC=$(sysctl hw.ncpu | sed 's/hw.ncpu: //')
+	# On Darwin, uname -m -p cannot be trusted.
+	echo "* Running on Darwin..."
+	rm -f ./a.out
+	if ! xcrun --sdk macosx clang lib/darwin-main.c >/dev/null 2>&1; then
+		echo "Cannot find 'xcrun --sdk macosx clang'." >&2
+		echo "You may need to install the command-line tools using Xcode." >&2
+		echo "See http://swtch.com/go/xcodegcc for details." >&2
+		exit 1
+	fi
+	CC9="xcrun --sdk macosx clang"
+	case "$(uname -a)" in
+	*ARM64*)
+		CC9="$CC9 -arch arm64"
+		echo '	Forcing arm64 binaries with clang.'
+		;;
+	esac
+
+	echo "CC9='$CC9'" >>$PLAN9/config
+	rm -f ./a.out
+fi
+
+if [ `uname` != Darwin ]; then
+	# Determine whether fontsrv X11 files are available.
+	rm -f a.out
+	cc -o a.out -c -Iinclude -I/usr/include -I/usr/local/include -I/usr/include/freetype2 -I/usr/local/include/freetype2 \
+	    -I/usr/X11R7/include -I/usr/X11R7/include/freetype2 \
+	    -I/usr/X11R6/include -I/usr/X11R6/include/freetype2 src/cmd/fontsrv/x11.c >/dev/null 2>&1
+	if [ -f a.out ]; then
+		echo "	fontsrv dependencies found."
+		echo "FONTSRV=fontsrv" >>$PLAN9/config
+	else
+		echo "	fontsrv dependencies not found."
+		echo "FONTSRV=" >>$PLAN9/config
+		rm -f bin/fontsrv
+	fi
+	rm -f a.out
+fi
+
+if [ -f LOCAL.config ]; then
+	echo Using LOCAL.config options:
+	sed 's/^/	/' LOCAL.config
+	cat LOCAL.config >>config
+fi
+
+echo "* Compiler version:"
+9c -v 2>&1 | grep -v 'Configured with:' | grep -i version | sed 's/^/	/'
+
+cd src
+echo "* Building mk..."
+../dist/buildmk 2>&1 | sed 's/^[+] //'
+
+if [ ! -x ../bin/mk ]; then
+    echo "* Error: mk failed to build."
+    exit 1
+fi
+
+) 2>&1 | tee install.log | $awk -f $PLAN9/dist/isum.awk -v 'copy='install.sum

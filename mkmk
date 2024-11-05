@@ -1,0 +1,27 @@
+#!/bin/sh
+
+priv=false
+
+case "x$1" in
+    x);;
+    x-p) priv=true;;
+    *) echo "usage: mkmk [-p]" 1>&2 exit 1
+esac
+
+echo "* Fetching dist..."
+git clone git@github.com:9fans/plan9port.git >>/dev/null 2>&1
+
+echo "* Injecting script..."
+cp install plan9port/INSTALL
+
+cd plan9port
+./INSTALL
+
+echo "* Extracting binary..."
+mv ./bin/mk ../mk
+
+if $priv; then
+    echo "* Installing..."
+    rm -r plan9port/
+    install -s -m 755 mk /usr/local/bin/mk
+fi
