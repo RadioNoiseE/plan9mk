@@ -22,6 +22,7 @@ mv ./bin/mk ../mk
 
 if $priv; then
     echo "* Installing..."
+    cd ..
     rm -r plan9port/
     install -s -m 755 mk /usr/local/bin/mk
 fi
